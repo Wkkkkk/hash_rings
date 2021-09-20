@@ -1,4 +1,6 @@
 use hash_rings::consistent;
+use hash_rings::generator;
+
 use rand::Rng;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -8,7 +10,7 @@ const ITEMS: u64 = 100_000;
 const NODES: u64 = 10;
 
 fn print_node_statistic(id: u64, expected: f64, actual: f64) {
-    let error = (expected - actual) / actual;
+    let error = (expected - actual) / expected;
     println!(
         "{:020} - Expected: {:.6} | Actual: {:.6} | Error: {:9.6}",
         id, expected, actual, error,
@@ -48,9 +50,12 @@ fn bench_consistent() {
         ring.insert_node(node, REPLICAS as usize);
     }
 
+    let mut g = generator::Generator::new();
+    let workload: Vec<u64> = g.next_n(ITEMS);
+
     let start = Instant::now();
-    for _ in 0..ITEMS {
-        let id = ring.get_node(&rng.gen::<u64>());
+    for key in workload {
+        let id = ring.get_node(&key);
         *occ_map.get_mut(id).unwrap() += 1.0;
     }
 
