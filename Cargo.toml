@@ -7,5 +7,5 @@ edition = "2018"
 
 [dependencies]
 primal = "0.2"
-rand = "0.4"
+rand = "0.5"
 siphasher = "0.2"

@@ -1,5 +1,5 @@
 use hash_rings::consistent;
-use rand::{Rng, XorShiftRng};
+use rand::Rng;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
@@ -31,7 +31,7 @@ fn bench_consistent() {
         "\nBenching consistent hashing ({} nodes, {} replicas, {} items)",
         NODES, REPLICAS, ITEMS,
     );
-    let mut rng = XorShiftRng::new_unseeded();
+    let mut rng = rand::thread_rng();
 
     let mut occ_map = HashMap::new();
     let mut nodes = Vec::new();
@@ -39,7 +39,7 @@ fn bench_consistent() {
     let total_replicas = REPLICAS * NODES;
 
     for _ in 0..NODES {
-        let id = rng.next_u64();
+        let id = rng.gen::<u64>();
         occ_map.insert(id, 0f64);
         nodes.push(id);
     }
@@ -50,7 +50,7 @@ fn bench_consistent() {
 
     let start = Instant::now();
     for _ in 0..ITEMS {
-        let id = ring.get_node(&rng.next_u64());
+        let id = ring.get_node(&rng.gen::<u64>());
         *occ_map.get_mut(id).unwrap() += 1.0;
     }
 
