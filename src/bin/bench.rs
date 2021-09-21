@@ -12,7 +12,7 @@ const ITEMS: u64 = 100_000;
 const NODES: u64 = 10;
 
 fn print_node_statistic(id: u64, expected: f64, actual: f64) -> f64 {
-    let error = (expected - actual) / expected;
+    let error = (expected - actual).abs() / expected;
     println!(
         "{:020} - Expected: {:.6} | Actual: {:.6} | Error: {:9.6}",
         id, expected, actual, error,
@@ -31,8 +31,6 @@ fn print_bench_statistic(duration: Duration) -> f64 {
     println!();
     ops_per_ns
 }
-
-fn write_result()
 
 fn bench_consistent(num_nodes: u64, num_replicas: u64, num_items: u64, dis: KeyDistribution) {
     println!(

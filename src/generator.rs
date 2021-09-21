@@ -4,8 +4,7 @@ use rand::Rng;
 use rand::distributions::{Uniform, Distribution};
 use rand_distr::{Normal, LogNormal};
 
-const MAX_KEY: f64 = 100.0;
-const MEDIUM_KEY: f64 = MAX_KEY / 2.0;
+const MAX_KEY: f64 = core::f64::MAX;
 
 #[derive(Copy, Clone)]
 pub enum KeyDistribution {
@@ -38,6 +37,7 @@ impl KeyDistribution {
     }
 }
 
+/// A random number generator
 pub struct Generator {
     rand: rand::rngs::ThreadRng,
     dis: KeyDistribution,
@@ -51,17 +51,23 @@ impl Generator {
         }
     }
 
-    pub fn next(&mut self) -> u64 {
-        match self.dis {
-            KeyDistribution::UNIFORM(x) => self.rand.sample(x).floor() as u64,
-            KeyDistribution::NORMAL(x) => self.rand.sample(x).floor() as u64,
-            KeyDistribution::LOGNORMAL(x) => self.rand.sample(x).floor() as u64
-        }
-    }
-
     pub fn next_n(&mut self, n: u64) -> Vec<u64> {
         (0..n)
-            .map(|_| { self.next() })
+            .map(|_| { self.next().unwrap() })
             .collect()
+    }
+}
+
+impl Iterator for Generator {
+    type Item = u64;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let r = match self.dis {
+            KeyDistribution::UNIFORM(x) => self.rand.sample(x).floor(),
+            KeyDistribution::NORMAL(x) => self.rand.sample(x).floor(),
+            KeyDistribution::LOGNORMAL(x) => self.rand.sample(x).floor()
+        };
+
+        Some(r as Self::Item)
     }
 }
