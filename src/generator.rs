@@ -71,3 +71,20 @@ impl Iterator for Generator {
         Some(r as Self::Item)
     }
 }
+
+#[test]
+fn test_distribution_display() {
+    let uniform = KeyDistribution::uniform_distribution();
+
+    assert_eq!(format!("{:}", uniform), "uniform");
+}
+
+#[test]
+fn test_iterator() {
+    let num_items :u64 = 10;
+    let mut key_generator = Generator::new(KeyDistribution::uniform_distribution());
+    let workload: Vec<u64> = key_generator.next_n(num_items);
+
+    assert_eq!(workload.len(), num_items as usize);
+    assert_eq!(workload.len(), num_items as usize);
+}
