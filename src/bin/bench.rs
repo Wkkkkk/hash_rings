@@ -1,4 +1,5 @@
 use hash_rings::consistent;
+use hash_rings::jump;
 use hash_rings::generator::{Generator, KeyDistribution};
 
 use std::fs::OpenOptions;
@@ -32,10 +33,23 @@ fn print_bench_statistic(duration: Duration) -> f64 {
     ops_per_ns
 }
 
+fn write_bench_statistic(num_items: u64, num_nodes: u64, dis: KeyDistribution, throughput: f64, variances: String, output_filename: String) {
+    let output_str = format!("{}\t{}\t{:}\t{}\t{}\n", num_items, num_nodes, dis, throughput, variances);
+    let file_path = format!("./src/scripts/{}.csv", output_filename);
+    println!("Write to file: {}", file_path);
+
+    let mut f = OpenOptions::new()
+        .append(true)
+        .create(true) // Optionally create the file if it doesn't already exist
+        .open(file_path)
+        .expect("Unable to open file");
+    f.write_all(output_str.as_bytes()).expect("Unable to write data");
+}
+
 fn bench_consistent(num_nodes: u64, num_replicas: u64, num_items: u64, dis: KeyDistribution) {
     println!(
-        "\nBenching consistent hashing ({} nodes, {} replicas, {} items)",
-        num_nodes, num_replicas, num_items,
+        "\nBenching consistent hashing ({} nodes, {} replicas, {} items, {})",
+        num_nodes, num_replicas, num_items, dis
     );
     let mut rng = rand::thread_rng();
 
@@ -79,17 +93,53 @@ fn bench_consistent(num_nodes: u64, num_replicas: u64, num_items: u64, dis: KeyD
 
     let throughput = print_bench_statistic(start.elapsed());
 
-    let output_str = format!("{}\t{}\t{:}\t{}\t{}\n", num_items, num_nodes, dis, throughput, variances);
-    let mut f = OpenOptions::new()
-        .append(true)
-        .create(true) // Optionally create the file if it doesn't already exist
-        .open("./src/scripts/consistent_hashing.csv")
-        .expect("Unable to open file");
-    f.write_all(output_str.as_bytes()).expect("Unable to write data");
+    write_bench_statistic(num_items, num_nodes, dis, throughput, variances, String::from("consistent_hashing"));
+}
+
+fn bench_jump(num_nodes: u64, num_items: u64, dis: KeyDistribution) {
+    println!(
+        "\nBenching jump hashing ({} nodes, {} items, {})",
+        num_nodes, num_items, dis
+    );
+    let mut rng = rand::thread_rng();
+
+    let mut occ_map = HashMap::new();
+    let ring = jump::Ring::new(num_nodes as u32);
+
+    for i in 0..num_nodes {
+        occ_map.insert(i, 0f64);
+    }
+
+    let mut key_generator = Generator::new(dis);
+    let workload: Vec<u64> = key_generator.next_n(num_items);
+
+    let start = Instant::now();
+    for item in workload {
+        let id = ring.get_node(&item) as u64;
+        *occ_map.get_mut(&id).unwrap() += 1.0;
+    }
+
+    let variances = (0..num_nodes)
+        .map(|i| {
+            print_node_statistic(
+                i,
+                1.0 / num_nodes as f64,
+                occ_map[&i] / num_items as f64
+            )
+        })
+        .map(|v| {
+            v.to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("\t");
+
+    let throughput = print_bench_statistic(start.elapsed());
+
+    write_bench_statistic(num_items, num_nodes, dis, throughput, variances, String::from("jump_hashing"));
 }
 
 fn main() {
-    let nodes_list = 3..=20;
+    let nodes_list = (5..=100).step_by(5);
     let items_list = (1000..=10_000).step_by(1000);
     // let replica_list = range(10, 100, 10);
 
@@ -98,6 +148,10 @@ fn main() {
             bench_consistent(nodes, REPLICAS, items, KeyDistribution::uniform_distribution());
             bench_consistent(nodes, REPLICAS, items, KeyDistribution::normal_distribution());
             bench_consistent(nodes, REPLICAS, items, KeyDistribution::lognormal_distribution());
+
+            bench_jump(nodes, items, KeyDistribution::uniform_distribution());
+            bench_jump(nodes, items, KeyDistribution::normal_distribution());
+            bench_jump(nodes, items, KeyDistribution::lognormal_distribution());
         }
     }
 }

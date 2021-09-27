@@ -86,5 +86,4 @@ fn test_iterator() {
     let workload: Vec<u64> = key_generator.next_n(num_items);
 
     assert_eq!(workload.len(), num_items as usize);
-    assert_eq!(workload.len(), num_items as usize);
 }
