@@ -1,5 +1,4 @@
-use hash_rings::consistent;
-use hash_rings::jump;
+use hash_rings::{consistent, jump, carp};
 use hash_rings::generator::{Generator, KeyDistribution};
 
 use std::fs::OpenOptions;
@@ -138,6 +137,61 @@ fn bench_jump(num_nodes: u64, num_items: u64, dis: KeyDistribution) {
     write_bench_statistic(num_items, num_nodes, dis, throughput, variances, String::from("jump_hashing"));
 }
 
+fn bench_carp(num_nodes: u64, num_items: u64, dis: KeyDistribution) {
+    println!(
+        "\nBenching carp hashing ({} nodes, {} items, {})",
+        num_nodes, num_items, dis
+    );
+    let mut rng = rand::thread_rng();
+
+    let mut occ_map = HashMap::new();
+    let mut nodes = Vec::new();
+    let mut total_weight = 0f64;
+
+    for _ in 0..num_nodes {
+        let id = rng.gen::<u64>();
+        let weight = rng.gen::<f64>();
+
+        total_weight += weight;
+        occ_map.insert(id, 0f64);
+        nodes.push((id, weight));
+    }
+
+    let ring = carp::Ring::new(
+        nodes
+            .iter()
+            .map(|node| carp::Node::new(&node.0, node.1))
+            .collect(),
+    );
+
+    let mut key_generator = Generator::new(dis);
+    let workload: Vec<u64> = key_generator.next_n(num_items);
+
+    let start = Instant::now();
+    for item in workload {
+        let id = ring.get_node(&item);
+        *occ_map.get_mut(id).unwrap() += 1.0;
+    }
+
+    let variances = nodes.iter()
+        .map(|node| {
+            print_node_statistic(
+                node.0,
+                node.1 / total_weight,
+                occ_map[&node.0] / num_items as f64,
+            )
+        })
+        .map(|v| {
+            v.to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("\t");
+
+    let throughput = print_bench_statistic(start.elapsed());
+
+    write_bench_statistic(num_items, num_nodes, dis, throughput, variances, String::from("carp_hashing"));
+}
+
 fn main() {
     let nodes_list = (5..=100).step_by(5);
     let items_list = (1000..=10_000).step_by(1000);
@@ -152,6 +206,10 @@ fn main() {
             bench_jump(nodes, items, KeyDistribution::uniform_distribution());
             bench_jump(nodes, items, KeyDistribution::normal_distribution());
             bench_jump(nodes, items, KeyDistribution::lognormal_distribution());
+
+            bench_carp(nodes, items, KeyDistribution::uniform_distribution());
+            bench_carp(nodes, items, KeyDistribution::normal_distribution());
+            bench_carp(nodes, items, KeyDistribution::lognormal_distribution());
         }
     }
 }
