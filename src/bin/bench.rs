@@ -6,6 +6,8 @@ use std::io::prelude::*;
 use rand::Rng;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
+use rand::distributions::{Uniform, Distribution};
+use rand_distr::{Normal, LogNormal};
 
 const HASH_COUNT: u64 = 21;
 const REPLICAS: u64 = 100;
@@ -33,7 +35,7 @@ fn print_bench_statistic(duration: Duration) -> f64 {
     ops_per_ns
 }
 
-fn write_bench_statistic(num_items: u64, num_nodes: u64, dis: KeyDistribution, throughput: f64, variances: String, output_filename: String) {
+fn write_bench_statistic(num_items: u64, num_nodes: u64, dis: KeyDistribution, throughput: f64, variances: String, latency: String, output_filename: String) {
     let output_str = format!("{}\t{}\t{:}\t{}\t{}\n", num_items, num_nodes, dis, throughput, variances);
     let file_path = format!("./src/scripts/{}.csv", output_filename);
     println!("Write to file: {}", file_path);
@@ -44,44 +46,66 @@ fn write_bench_statistic(num_items: u64, num_nodes: u64, dis: KeyDistribution, t
         .open(file_path)
         .expect("Unable to open file");
     f.write_all(output_str.as_bytes()).expect("Unable to write data");
+
+    let latency_file_name = format!("{}_{}_{:}", num_items, num_nodes, dis);
+    let latency_file_path = format!("./src/scripts/{}/{}.csv", output_filename, latency_file_name);
+    println!("Write to latency file: {}", latency_file_path);
+
+    let mut l = OpenOptions::new()
+        .append(true)
+        .create(true) // Optionally create the file if it doesn't already exist
+        .open(latency_file_path)
+        .expect("Unable to open file");
+    l.write_all(latency.as_bytes()).expect("Unable to write data");
 }
 
-fn bench_consistent(num_nodes: u64, num_replicas: u64, num_items: u64, dis: KeyDistribution) {
+fn bench_consistent(num_nodes: u64, num_items: u64, dis: KeyDistribution) {
     println!(
         "\nBenching consistent hashing ({} nodes, {} replicas, {} items, {})",
-        num_nodes, num_replicas, num_items, dis
+        num_nodes, REPLICAS, num_items, dis
     );
     let mut rng = rand::thread_rng();
+    let die = rand_distr::Normal::new(5.0, 1.0).unwrap();
 
     let mut occ_map = HashMap::new();
+    let mut latency_map = HashMap::new();
+    let mut latencies = vec![0f64; num_items as usize];
+
     let mut nodes = Vec::new();
     let mut ring = consistent::Ring::new();
-    let total_replicas = num_replicas * num_nodes;
+    let total_replicas = REPLICAS * num_nodes;
 
     for _ in 0..num_nodes {
         let id = rng.gen::<u64>();
         occ_map.insert(id, 0f64);
+        latency_map.insert(id, 0f64);
         nodes.push(id);
     }
 
     for node in &nodes {
-        ring.insert_node(node, num_replicas as usize);
+        ring.insert_node(node, REPLICAS as usize);
     }
 
     let mut key_generator = Generator::new(dis);
     let workload: Vec<u64> = key_generator.next_n(num_items);
 
     let start = Instant::now();
-    for item in workload {
+    for (i, item) in workload.iter().enumerate() {
         let id = ring.get_node(&item);
         *occ_map.get_mut(id).unwrap() += 1.0;
+
+        // calculate latency
+        let response_time = rng.sample(die);
+        *latency_map.get_mut(id).unwrap() += response_time;
+        let latency = *latency_map.get_mut(id).unwrap();
+        latencies[i] = latency;
     }
 
     let variances = nodes.iter()
         .map(|node| {
             print_node_statistic(
                 *node,
-                num_replicas as f64 / total_replicas as f64,
+                REPLICAS as f64 / total_replicas as f64,
                 occ_map[&node] / num_items as f64,
             )
         })
@@ -93,7 +117,12 @@ fn bench_consistent(num_nodes: u64, num_replicas: u64, num_items: u64, dis: KeyD
 
     let throughput = print_bench_statistic(start.elapsed());
 
-    write_bench_statistic(num_items, num_nodes, dis, throughput, variances, String::from("consistent_hashing"));
+    let latency = latencies.iter()
+        .map(|v| v.to_string())
+        .collect::<Vec<_>>()
+        .join("\t");
+
+    write_bench_statistic(num_items, num_nodes, dis, throughput, variances, latency, String::from("consistent_hashing"));
 }
 
 fn bench_jump(num_nodes: u64, num_items: u64, dis: KeyDistribution) {
@@ -102,21 +131,32 @@ fn bench_jump(num_nodes: u64, num_items: u64, dis: KeyDistribution) {
         num_nodes, num_items, dis
     );
     let mut rng = rand::thread_rng();
+    let die = rand_distr::Normal::new(5.0, 1.0).unwrap();
 
     let mut occ_map = HashMap::new();
+    let mut latency_map = HashMap::new();
+    let mut latencies = vec![0f64; num_items as usize];
+
     let ring = jump::Ring::new(num_nodes as u32);
 
     for i in 0..num_nodes {
         occ_map.insert(i, 0f64);
+        latency_map.insert(i, 0f64);
     }
 
     let mut key_generator = Generator::new(dis);
     let workload: Vec<u64> = key_generator.next_n(num_items);
 
     let start = Instant::now();
-    for item in workload {
+    for (i, item) in workload.iter().enumerate() {
         let id = ring.get_node(&item) as u64;
         *occ_map.get_mut(&id).unwrap() += 1.0;
+
+        // calculate latency
+        let response_time = rng.sample(die);
+        *latency_map.get_mut(&id).unwrap() += response_time;
+        let latency = *latency_map.get_mut(&id).unwrap();
+        latencies[i] = latency;
     }
 
     let variances = (0..num_nodes)
@@ -135,7 +175,12 @@ fn bench_jump(num_nodes: u64, num_items: u64, dis: KeyDistribution) {
 
     let throughput = print_bench_statistic(start.elapsed());
 
-    write_bench_statistic(num_items, num_nodes, dis, throughput, variances, String::from("jump_hashing"));
+    let latency = latencies.iter()
+        .map(|v| v.to_string())
+        .collect::<Vec<_>>()
+        .join("\t");
+
+    write_bench_statistic(num_items, num_nodes, dis, throughput, variances, latency,String::from("jump_hashing"));
 }
 
 fn bench_carp(num_nodes: u64, num_items: u64, dis: KeyDistribution) {
@@ -144,8 +189,12 @@ fn bench_carp(num_nodes: u64, num_items: u64, dis: KeyDistribution) {
         num_nodes, num_items, dis
     );
     let mut rng = rand::thread_rng();
+    let die = rand_distr::Normal::new(5.0, 1.0).unwrap();
 
     let mut occ_map = HashMap::new();
+    let mut latency_map = HashMap::new();
+    let mut latencies = vec![0f64; num_items as usize];
+
     let mut nodes = Vec::new();
     let mut total_weight = 0f64;
 
@@ -155,6 +204,7 @@ fn bench_carp(num_nodes: u64, num_items: u64, dis: KeyDistribution) {
 
         total_weight += weight;
         occ_map.insert(id, 0f64);
+        latency_map.insert(id, 0f64);
         nodes.push((id, weight));
     }
 
@@ -169,9 +219,15 @@ fn bench_carp(num_nodes: u64, num_items: u64, dis: KeyDistribution) {
     let workload: Vec<u64> = key_generator.next_n(num_items);
 
     let start = Instant::now();
-    for item in workload {
+    for (i, item) in workload.iter().enumerate() {
         let id = ring.get_node(&item);
         *occ_map.get_mut(id).unwrap() += 1.0;
+
+        // calculate latency
+        let response_time = rng.sample(die);
+        *latency_map.get_mut(id).unwrap() += response_time;
+        let latency = *latency_map.get_mut(id).unwrap();
+        latencies[i] = latency;
     }
 
     let variances = nodes.iter()
@@ -190,7 +246,12 @@ fn bench_carp(num_nodes: u64, num_items: u64, dis: KeyDistribution) {
 
     let throughput = print_bench_statistic(start.elapsed());
 
-    write_bench_statistic(num_items, num_nodes, dis, throughput, variances, String::from("carp_hashing"));
+    let latency = latencies.iter()
+        .map(|v| v.to_string())
+        .collect::<Vec<_>>()
+        .join("\t");
+
+    write_bench_statistic(num_items, num_nodes, dis, throughput, variances, latency, String::from("carp_hashing"));
 }
 
 fn bench_maglev(num_nodes: u64, num_items: u64, dis: KeyDistribution) {
@@ -199,14 +260,19 @@ fn bench_maglev(num_nodes: u64, num_items: u64, dis: KeyDistribution) {
         num_nodes, num_items, dis
     );
     let mut rng = rand::thread_rng();
+    let die = rand_distr::Normal::new(5.0, 1.0).unwrap();
 
     let mut occ_map = HashMap::new();
+    let mut latency_map = HashMap::new();
+    let mut latencies = vec![0f64; num_items as usize];
+
     let mut nodes = Vec::new();
 
     for _ in 0..num_nodes {
         let id = rng.gen::<u64>();
 
-        occ_map.insert(id, 0);
+        occ_map.insert(id, 0f64);
+        latency_map.insert(id, 0f64);
         nodes.push(id);
     }
 
@@ -216,9 +282,15 @@ fn bench_maglev(num_nodes: u64, num_items: u64, dis: KeyDistribution) {
     let workload: Vec<u64> = key_generator.next_n(num_items);
 
     let start = Instant::now();
-    for item in workload {
+    for (i, item) in workload.iter().enumerate() {
         let id = ring.get_node(&item);
-        *occ_map.get_mut(id).unwrap() += 1;
+        *occ_map.get_mut(id).unwrap() += 1.0;
+
+        // calculate latency
+        let response_time = rng.sample(die);
+        *latency_map.get_mut(id).unwrap() += response_time;
+        let latency = *latency_map.get_mut(id).unwrap();
+        latencies[i] = latency;
     }
 
     let variances = nodes.iter()
@@ -237,7 +309,12 @@ fn bench_maglev(num_nodes: u64, num_items: u64, dis: KeyDistribution) {
 
     let throughput = print_bench_statistic(start.elapsed());
 
-    write_bench_statistic(num_items, num_nodes, dis, throughput, variances, String::from("maglev_hashing"));
+    let latency = latencies.iter()
+        .map(|v| v.to_string())
+        .collect::<Vec<_>>()
+        .join("\t");
+
+    write_bench_statistic(num_items, num_nodes, dis, throughput, variances, latency, String::from("maglev_hashing"));
 }
 
 fn bench_mpc(num_nodes: u64, num_items: u64, dis: KeyDistribution) {
@@ -246,15 +323,20 @@ fn bench_mpc(num_nodes: u64, num_items: u64, dis: KeyDistribution) {
         num_nodes, num_items, dis
     );
     let mut rng = rand::thread_rng();
+    let die = rand_distr::Normal::new(5.0, 1.0).unwrap();
 
     let mut occ_map = HashMap::new();
+    let mut latency_map = HashMap::new();
+    let mut latencies = vec![0f64; num_items as usize];
+
     let mut nodes = Vec::new();
     let mut ring = mpc::Ring::new(HASH_COUNT);
 
     for _ in 0..num_nodes {
         let id = rng.gen::<u64>();
 
-        occ_map.insert(id, 0);
+        occ_map.insert(id, 0f64);
+        latency_map.insert(id, 0f64);
         nodes.push(id);
     }
 
@@ -266,9 +348,15 @@ fn bench_mpc(num_nodes: u64, num_items: u64, dis: KeyDistribution) {
     let workload: Vec<u64> = key_generator.next_n(num_items);
 
     let start = Instant::now();
-    for item in workload {
+    for (i, item) in workload.iter().enumerate() {
         let id = ring.get_node(&item);
-        *occ_map.get_mut(id).unwrap() += 1;
+        *occ_map.get_mut(id).unwrap() += 1.0;
+
+        // calculate latency
+        let response_time = rng.sample(die);
+        *latency_map.get_mut(id).unwrap() += response_time;
+        let latency = *latency_map.get_mut(id).unwrap();
+        latencies[i] = latency;
     }
 
     let variances = nodes.iter()
@@ -287,7 +375,12 @@ fn bench_mpc(num_nodes: u64, num_items: u64, dis: KeyDistribution) {
 
     let throughput = print_bench_statistic(start.elapsed());
 
-    write_bench_statistic(num_items, num_nodes, dis, throughput, variances, String::from("mpc_hashing"));
+    let latency = latencies.iter()
+        .map(|v| v.to_string())
+        .collect::<Vec<_>>()
+        .join("\t");
+
+    write_bench_statistic(num_items, num_nodes, dis, throughput, variances, latency,String::from("mpc_hashing"));
 }
 
 fn bench_rendezvous(num_nodes: u64, num_items: u64, dis: KeyDistribution) {
@@ -296,8 +389,12 @@ fn bench_rendezvous(num_nodes: u64, num_items: u64, dis: KeyDistribution) {
         num_nodes, num_items, dis
     );
     let mut rng = rand::thread_rng();
+    let die = rand_distr::Normal::new(5.0, 1.0).unwrap();
 
     let mut occ_map = HashMap::new();
+    let mut latency_map = HashMap::new();
+    let mut latencies = vec![0f64; num_items as usize];
+
     let mut nodes = Vec::new();
     let mut ring = rendezvous::Ring::new();
 
@@ -305,6 +402,7 @@ fn bench_rendezvous(num_nodes: u64, num_items: u64, dis: KeyDistribution) {
         let id = rng.gen::<u64>();
 
         occ_map.insert(id, 0f64);
+        latency_map.insert(id, 0f64);
         nodes.push(id);
     }
 
@@ -316,9 +414,15 @@ fn bench_rendezvous(num_nodes: u64, num_items: u64, dis: KeyDistribution) {
     let workload: Vec<u64> = key_generator.next_n(num_items);
 
     let start = Instant::now();
-    for item in workload {
+    for (i, item) in workload.iter().enumerate() {
         let id = ring.get_node(&item);
         *occ_map.get_mut(id).unwrap() += 1.0;
+
+        // calculate latency
+        let response_time = rng.sample(die);
+        *latency_map.get_mut(id).unwrap() += response_time;
+        let latency = *latency_map.get_mut(id).unwrap();
+        latencies[i] = latency;
     }
 
     let variances = nodes.iter()
@@ -337,7 +441,12 @@ fn bench_rendezvous(num_nodes: u64, num_items: u64, dis: KeyDistribution) {
 
     let throughput = print_bench_statistic(start.elapsed());
 
-    write_bench_statistic(num_items, num_nodes, dis, throughput, variances, String::from("rendezvous_hashing"));
+    let latency = latencies.iter()
+        .map(|v| v.to_string())
+        .collect::<Vec<_>>()
+        .join("\t");
+
+    write_bench_statistic(num_items, num_nodes, dis, throughput, variances, latency, String::from("rendezvous_hashing"));
 }
 
 fn bench_weighted_rendezvous(num_nodes: u64, num_items: u64, dis: KeyDistribution) {
@@ -346,8 +455,12 @@ fn bench_weighted_rendezvous(num_nodes: u64, num_items: u64, dis: KeyDistributio
         num_nodes, num_items, dis
     );
     let mut rng = rand::thread_rng();
+    let die = rand_distr::Normal::new(5.0, 1.0).unwrap();
 
     let mut occ_map = HashMap::new();
+    let mut latency_map = HashMap::new();
+    let mut latencies = vec![0f64; num_items as usize];
+
     let mut nodes = Vec::new();
     let mut ring = weighted_rendezvous::Ring::new();
     let mut total_weight = 0f64;
@@ -358,6 +471,7 @@ fn bench_weighted_rendezvous(num_nodes: u64, num_items: u64, dis: KeyDistributio
 
         total_weight += weight;
         occ_map.insert(id, 0f64);
+        latency_map.insert(id, 0f64);
         nodes.push((id, weight));
     }
 
@@ -369,9 +483,15 @@ fn bench_weighted_rendezvous(num_nodes: u64, num_items: u64, dis: KeyDistributio
     let workload: Vec<u64> = key_generator.next_n(num_items);
 
     let start = Instant::now();
-    for item in workload {
+    for (i, item) in workload.iter().enumerate() {
         let id = ring.get_node(&item);
         *occ_map.get_mut(id).unwrap() += 1.0;
+
+        // calculate latency
+        let response_time = rng.sample(die);
+        *latency_map.get_mut(id).unwrap() += response_time;
+        let latency = *latency_map.get_mut(id).unwrap();
+        latencies[i] = latency;
     }
 
     let variances = nodes.iter()
@@ -390,7 +510,12 @@ fn bench_weighted_rendezvous(num_nodes: u64, num_items: u64, dis: KeyDistributio
 
     let throughput = print_bench_statistic(start.elapsed());
 
-    write_bench_statistic(num_items, num_nodes, dis, throughput, variances, String::from("weighted_rendezvous_hashing"));
+    let latency = latencies.iter()
+        .map(|v| v.to_string())
+        .collect::<Vec<_>>()
+        .join("\t");
+
+    write_bench_statistic(num_items, num_nodes, dis, throughput, variances, latency, String::from("weighted_rendezvous_hashing"));
 }
 
 fn main() {
@@ -400,9 +525,9 @@ fn main() {
 
     for nodes in nodes_list {
         for items in items_list.clone() {
-            bench_consistent(nodes, REPLICAS, items, KeyDistribution::uniform_distribution());
-            bench_consistent(nodes, REPLICAS, items, KeyDistribution::normal_distribution());
-            bench_consistent(nodes, REPLICAS, items, KeyDistribution::lognormal_distribution());
+            bench_consistent(nodes, items, KeyDistribution::uniform_distribution());
+            bench_consistent(nodes, items, KeyDistribution::normal_distribution());
+            bench_consistent(nodes, items, KeyDistribution::lognormal_distribution());
 
             bench_jump(nodes, items, KeyDistribution::uniform_distribution());
             bench_jump(nodes, items, KeyDistribution::normal_distribution());
