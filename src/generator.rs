@@ -25,15 +25,15 @@ impl fmt::Display for KeyDistribution {
 
 impl KeyDistribution {
     pub fn uniform_distribution() -> KeyDistribution {
-        KeyDistribution::UNIFORM(Uniform::new(0.0, MAX_KEY))
+        KeyDistribution::UNIFORM(Uniform::new(10.0, 10_000.0))
     }
 
     pub fn normal_distribution() -> KeyDistribution {
-        KeyDistribution::NORMAL(Normal::new(5.0, 1.0).unwrap())
+        KeyDistribution::NORMAL(Normal::new(100.0, 10.0).unwrap())
     }
 
     pub fn lognormal_distribution() -> KeyDistribution {
-        KeyDistribution::LOGNORMAL(LogNormal::new(5.0, 1.0).unwrap())
+        KeyDistribution::LOGNORMAL(LogNormal::new(8.0, 1.0).unwrap())
     }
 }
 
